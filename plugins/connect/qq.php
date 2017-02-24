@@ -16,7 +16,7 @@
 /* 访问控制 */
 defined('IN_ECTOUCH') or die('Deny Access');
 
-$payment_lang = ROOT_PATH . 'plugins/connect/language/' . C('lang') . '/' . basename(__FILE__);
+$payment_lang = ROOT_PATH . 'plugins/connect/languages/' . C('lang') . '/' . basename(__FILE__);
 
 if (file_exists($payment_lang)) {
     include_once ($payment_lang);
@@ -26,22 +26,22 @@ if (file_exists($payment_lang)) {
 if (isset($set_modules) && $set_modules == TRUE) {
     $i = isset($modules) ? count($modules) : 0;
     /* 类名 */
-    $modules[$i]['name'] = 'QQ';
+    $modules[$i]['name'] = 'QQ登录插件';
     // 文件名，不包含后缀
     $modules[$i]['type'] = 'qq';
 
     $modules[$i]['className'] = 'qq';
     // 作者信息
-    $modules[$i]['author'] = 'Zhulin';
+    $modules[$i]['author'] = 'ECTouch Team';
 
     // 作者QQ
-    $modules[$i]['qq'] = '2880175566';
+    $modules[$i]['qq'] = '10000';
 
     // 作者邮箱
-    $modules[$i]['email'] = 'zhulin@ecmoban.com';
+    $modules[$i]['email'] = 'support@ectouch.cn';
 
     // 申请网址
-    $modules[$i]['website'] = 'http://open.qq.com';
+    $modules[$i]['website'] = 'http://connect.qq.com';
 
     // 版本号
     $modules[$i]['version'] = '1.0';
@@ -101,12 +101,39 @@ class qq {
      * @param unknown $code            
      * @return boolean
      */
-    public function call_back($info, $url, $code) {
+    public function call_back($info, $url, $code, $type) {
         $result = $this->access_token($url, $code);
         if (isset($result['access_token']) && $result['access_token'] != '') {
             // 保存登录信息，此示例中使用session保存
-            $_SESSION['access_token'] = $result['access_token']; // access token echo '授权完成，请记录<br/>access token：<input size="50" value="', $result['access_token'], '">' . $_SESSION['qq_t'];
-            return true;
+            $this->access_token = $result['access_token']; // access token echo '授权完成，请记录<br/>access token：<input size="50" value="', $result['access_token'], '">' . $_SESSION['qq_t'];
+            $openid = $this->get_openid();
+            // 获取用户信息
+            $userinfo = $this->get_user_info($openid);
+            // 处理数据
+            $userinfo['aite_id'] = $type . '_' . $openid; // 添加登录标示
+            $_SESSION['avatar'] = $userinfo['figureurl_qq_1']; // 保存头像
+            $user = init_users();
+            if ($userinfo['user_name'] = model('Users')->get_one_user($userinfo['aite_id'])) {
+                // 已有记录
+                $user->set_session($userinfo['user_name']);
+                $user->set_cookie($userinfo['user_name']);
+                model('Users')->update_user_info();
+                model('Users')->recalculate_price();
+                return $url;
+            }
+            $userinfo['user_name'] = substr(strtoupper($userinfo['aite_id']), 0, 8);
+            if ($user->check_user($userinfo['user_name'])) {
+                $userinfo['user_name'] = $userinfo['user_name'] . rand(1000, 9999); // 重名处理
+            }
+            $userinfo['email'] = empty($userinfo['email']) ? substr($openid, -6) . '@' . get_top_domain() : $userinfo['email'];
+            // 插入数据库
+            model('Users')->third_reg($userinfo);
+            $user->set_session($userinfo['user_name']);
+            $user->set_cookie($userinfo['user_name']);
+            model('Users')->update_user_info();
+            model('Users')->recalculate_price();
+
+            return $url;
         } else {
             // echo "授权失败";
             return false;
@@ -146,8 +173,7 @@ class qq {
             'state' => '',
             'redirect_uri' => $callback_url
         );
-        $url = 'https://graph.qq.com/oauth2.0/token?' . http_build_query($params);
-        $url = str_replace('&amp;', '&', $url);
+        $url = 'https://graph.qq.com/oauth2.0/token?' . http_build_query($params, '', '&');
         $result_str = $this->http($url);
         $json_r = array();
         if ($result_str != '')
@@ -239,12 +265,10 @@ class qq {
         $params['oauth_consumer_key'] = $this->appid;
         $params['format'] = 'json';
         if ($method == 'GET') {
-            $query_url = $url . '?' . http_build_query($params);
-            $query_url = str_replace('&amp;', '&', $query_url);
+            $query_url = $url . '?' . http_build_query($params, '', '&');
             $result_str = $this->http($query_url);
         } else {
-            $query = http_build_query($params);
-            $query = str_replace('&amp;', '&', $query);
+            $query = http_build_query($params, '', '&');
             $result_str = $this->http($url, $query, 'POST');
         }
         $result = array();
